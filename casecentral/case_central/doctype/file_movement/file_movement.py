@@ -332,6 +332,11 @@ def find_case_by_barcode(barcode):
             case_name = frappe.db.get_value("Case", {fieldname: barcode}, "name")
             if case_name:
                 return case_name
+
+    prev_case = frappe.db.get_value("File Movement Item", {"barcode": barcode}, "case")
+    if prev_case:
+        return prev_case
+
     return None
 
 

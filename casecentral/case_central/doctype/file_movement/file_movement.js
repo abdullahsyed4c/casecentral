@@ -59,12 +59,7 @@ frappe.ui.form.on("File Movement", {
     scan_barcode: function (frm) {
         var val = (frm.doc.scan_barcode || "").trim();
         if (!val) return;
-        frm.set_value("scan_barcode", "");
-        if (frm.doc.has_incoming) {
-            process_incoming_scan(frm, val);
-        } else {
-            process_outgoing_scan(frm, val);
-        }
+        handle_barcode_scan(frm, val);
     }
 });
 
@@ -204,6 +199,59 @@ function show_single_scan_error(msg) {
     });
 }
 
+var _scan_in_flight = false;
+var _last_scan_code = "";
+var _last_scan_time = 0;
+
+function handle_barcode_scan(frm, val) {
+    val = (val || "").trim();
+    if (!val) return;
+
+    var now = Date.now();
+    if (val === _last_scan_code && (now - _last_scan_time) < 1200) {
+        return;
+    }
+    if (_scan_in_flight) {
+        return;
+    }
+
+    _last_scan_code = val;
+    _last_scan_time = now;
+    _scan_in_flight = true;
+
+    if (frm.fields_dict.scan_barcode) {
+        if (frm.fields_dict.scan_barcode.$input) {
+            frm.fields_dict.scan_barcode.$input.val("");
+        }
+        frm.doc.scan_barcode = "";
+    }
+
+    var is_incoming = Boolean(
+        frm.doc.docstatus === 1 &&
+        frm.doc.has_incoming &&
+        (frm.doc.status === "Incoming Created" || frm.doc.status === "Missing Files")
+    );
+
+    if (frm.doc.docstatus === 0) {
+        process_outgoing_scan(frm, val);
+    } else if (is_incoming) {
+        process_incoming_scan(frm, val);
+    } else {
+        _scan_in_flight = false;
+        frappe.show_alert({
+            message: __("Scanner is inactive for current movement status ({0}).", [frm.doc.status]),
+            indicator: "orange"
+        });
+    }
+}
+
+function get_or_add_outgoing_row(frm) {
+    var blank = (frm.doc.outgoing_files || []).find(function (r) {
+        return !r.matter && !r.case && !r.barcode;
+    });
+    return blank || frm.add_child("outgoing_files");
+}
+
 function setup_scan_barcode_input(frm) {
     if (!frm.fields_dict.scan_barcode) return;
 
@@ -229,15 +277,10 @@ function setup_scan_barcode_input(frm) {
         field.$input.off("keydown.fm_scan").on("keydown.fm_scan", function (e) {
             if (e.which === 13) {
                 e.preventDefault();
+                e.stopPropagation();
                 var val = $(this).val().trim();
                 if (val) {
-                    $(this).val("");
-                    frm.set_value("scan_barcode", "");
-                    if (frm.doc.has_incoming) {
-                        process_incoming_scan(frm, val);
-                    } else {
-                        process_outgoing_scan(frm, val);
-                    }
+                    handle_barcode_scan(frm, val);
                 }
             }
         });
@@ -245,13 +288,19 @@ function setup_scan_barcode_input(frm) {
 }
 
 function process_outgoing_scan(frm, code) {
-    if (!code) return;
+    if (!code) {
+        _scan_in_flight = false;
+        return;
+    }
 
     frappe.call({
         method: "casecentral.case_central.doctype.file_movement.file_movement.get_scan_information",
         args: { value: code },
         freeze: true,
         freeze_message: __("Resolving scan '{0}'...", [code]),
+        always: function () {
+            _scan_in_flight = false;
+        },
         callback: function (r) {
             var data = r.message;
             if (!data || data.type === "not_found") {
@@ -268,9 +317,12 @@ function process_outgoing_scan(frm, code) {
                         return item.matter === data.matter && !item.case;
                     });
                     if (!exists) {
-                        var row = frm.add_child("outgoing_files");
+                        var row = get_or_add_outgoing_row(frm);
                         row.matter = data.matter;
+                        row.case = "";
+                        row.barcode = "";
                         frm.refresh_field("outgoing_files");
+                        frm.dirty();
                         frappe.show_alert({
                             message: __("Added Matter <b>{0}</b> (No linked Cases found).", [data.matter]),
                             indicator: "blue"
@@ -287,11 +339,12 @@ function process_outgoing_scan(frm, code) {
                         return item.case === c.name;
                     });
                     if (!exists) {
-                        var row = frm.add_child("outgoing_files");
+                        var row = get_or_add_outgoing_row(frm);
                         row.matter = c.matter || data.matter;
                         row.case = c.name || "";
                         row.barcode = c.barcode || "";
                         frm.refresh_field("outgoing_files");
+                        frm.dirty();
                         frappe.show_alert({
                             message: __("Added Case <b>{0}</b> for Matter <b>{1}</b>.", [c.name, data.matter]),
                             indicator: "green"
@@ -319,11 +372,12 @@ function process_outgoing_scan(frm, code) {
                     return;
                 }
 
-                var row = frm.add_child("outgoing_files");
+                var row = get_or_add_outgoing_row(frm);
                 row.matter = data.matter || "";
                 row.case = data.case_name;
                 row.barcode = data.barcode || "";
                 frm.refresh_field("outgoing_files");
+                frm.dirty();
 
                 frappe.show_alert({
                     message: __("Added Case <b>{0}</b> to Outgoing Files.", [data.case_name]),
@@ -718,7 +772,10 @@ function show_return_case_selection_dialog(matter, cases, on_select, on_cancel) 
 
 
 function process_incoming_scan(frm, code) {
-    if (!code) return;
+    if (!code) {
+        _scan_in_flight = false;
+        return;
+    }
 
     frappe.call({
         method: "casecentral.case_central.doctype.file_movement.file_movement.scan_incoming_file",
@@ -728,6 +785,9 @@ function process_incoming_scan(frm, code) {
         },
         freeze: true,
         freeze_message: __("Recording incoming scan '{0}'...", [code]),
+        always: function () {
+            _scan_in_flight = false;
+        },
         callback: function (r) {
             if (!r.message) return;
             var res = r.message;
