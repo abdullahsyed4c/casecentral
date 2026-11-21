@@ -41,6 +41,22 @@ function update_form_indicator(frm) {
     }
 }
 
+function invalidate_file_movement_listview() {
+    if (frappe.views && frappe.views.list_view && frappe.views.list_view["File Movement"]) {
+        var lv = frappe.views.list_view["File Movement"];
+        lv.last_args = null;
+        if (lv.$page && lv.$page.is(":visible")) {
+            lv.refresh();
+        }
+    }
+    if (window.cur_list && cur_list.doctype === "File Movement") {
+        cur_list.last_args = null;
+        if (cur_list.$page && cur_list.$page.is(":visible")) {
+            cur_list.refresh();
+        }
+    }
+}
+
 frappe.ui.form.on("File Movement", {
 
     onload: function (frm) {
@@ -48,6 +64,24 @@ frappe.ui.form.on("File Movement", {
         setup_scan_barcode_input(frm);
         setup_giver_receiver_filter(frm);
         setup_table_grids(frm);
+
+        if (frm.page && frm.page.wrapper) {
+            frm.page.wrapper.on("hide", function () {
+                invalidate_file_movement_listview();
+            });
+        }
+    },
+
+    after_save: function (frm) {
+        invalidate_file_movement_listview();
+    },
+
+    on_submit: function (frm) {
+        invalidate_file_movement_listview();
+    },
+
+    after_cancel: function (frm) {
+        invalidate_file_movement_listview();
     },
 
     refresh: function (frm) {
@@ -1274,6 +1308,7 @@ function add_create_incoming_button(frm) {
                     freeze_message: __("Initializing Incoming Files..."),
                     callback: function (r) {
                         if (r.message) {
+                            invalidate_file_movement_listview();
                             frappe.show_alert({
                                 message: __("Incoming Files table activated. You can now scan returned files."),
                                 indicator: "green"
@@ -1310,6 +1345,7 @@ function add_cancel_incoming_button(frm) {
                     freeze_message: __("Cancelling Incoming workflow..."),
                     callback: function (r) {
                         if (r.message) {
+                            invalidate_file_movement_listview();
                             frappe.show_alert({
                                 message: __("Incoming workflow cancelled. Status updated to 'Taken Away'."),
                                 indicator: "orange"

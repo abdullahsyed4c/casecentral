@@ -24,6 +24,29 @@ def ensure_status_options():
         pass
 
 
+def publish_movement_realtime(movement_name):
+    try:
+        frappe.publish_realtime(
+            "doc_update",
+            {"doctype": "File Movement", "name": movement_name},
+            doctype="File Movement",
+            docname=movement_name,
+            after_commit=True
+        )
+        frappe.publish_realtime(
+            "list_update",
+            {"doctype": "File Movement", "name": movement_name},
+            after_commit=True
+        )
+        frappe.publish_realtime(
+            "file_movement_updated",
+            {"doctype": "File Movement", "name": movement_name},
+            after_commit=True
+        )
+    except Exception:
+        pass
+
+
 class FileMovement(Document):
 
     def autoname(self):
@@ -43,6 +66,7 @@ class FileMovement(Document):
 
     def on_update_after_submit(self):
         self.update_outgoing_linked_statuses()
+        publish_movement_realtime(self.name)
 
     def validate_movement(self):
         if not self.giver:
@@ -178,11 +202,13 @@ class FileMovement(Document):
         self.status = "Taken Away"
         self.db_set("status", "Taken Away")
         self.update_outgoing_linked_statuses()
+        publish_movement_realtime(self.name)
 
     def on_cancel(self):
         self.status = "Cancelled"
         self.db_set("status", "Cancelled")
         self.restore_outgoing_linked_statuses()
+        publish_movement_realtime(self.name)
 
     def on_trash(self):
         if self.docstatus == 1:
@@ -629,6 +655,7 @@ def create_incoming(movement_name):
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=True)
     doc.update_outgoing_linked_statuses()
+    publish_movement_realtime(doc.name)
 
     return {
         "name": doc.name,
@@ -671,6 +698,7 @@ def cancel_incoming(movement_name):
     doc.save(ignore_permissions=True)
 
     doc.update_outgoing_linked_statuses()
+    publish_movement_realtime(doc.name)
 
     return {
         "name": doc.name,
@@ -832,6 +860,7 @@ def scan_incoming_file(movement_name, value):
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=True)
     doc.update_outgoing_linked_statuses()
+    publish_movement_realtime(doc.name)
 
     return {
         "status": "success",
@@ -954,6 +983,7 @@ def return_missing_files(
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=True)
     doc.update_outgoing_linked_statuses()
+    publish_movement_realtime(doc.name)
 
     return {
         "status": doc.status,
