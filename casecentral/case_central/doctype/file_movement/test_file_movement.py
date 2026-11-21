@@ -459,6 +459,58 @@ class TestFileMovement(FrappeTestCase):
         recalculate_matter_status_from_movements(self.matter_1)
         self.assertEqual(frappe.db.get_value("Matter", self.matter_1, "status"), "Open")
 
+    def test_taken_away_file_cannot_be_re_dispatched(self):
+        """
+        Files that are currently taken away in an active File Movement
+        cannot be added or dispatched in another File Movement until returned.
+        """
+        # 1. Create first movement and submit it
+        fm1 = frappe.new_doc("File Movement")
+        fm1.giver = self.giver
+        fm1.receiver = self.receiver
+        fm1.append("outgoing_files", {
+            "barcode": "TEST-TAKEN-BC-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        fm1.insert(ignore_permissions=True)
+        fm1.submit()
+        self.assertEqual(fm1.status, "Taken Away")
+
+        # 2. Check get_scan_information returns taken_away: True
+        info_case = get_scan_information(self.case_1)
+        self.assertTrue(info_case.get("taken_away"))
+        self.assertEqual(info_case.get("taken_away_info", {}).get("movement"), fm1.name)
+
+        info_bc = get_scan_information("TEST-TAKEN-BC-01")
+        self.assertTrue(info_bc.get("taken_away"))
+        self.assertEqual(info_bc.get("taken_away_info", {}).get("movement"), fm1.name)
+
+        # 3. Create second movement attempting to dispatch the same case -> must raise ValidationError
+        fm2 = frappe.new_doc("File Movement")
+        fm2.giver = self.giver
+        fm2.receiver = self.receiver
+        fm2.append("outgoing_files", {
+            "barcode": "TEST-TAKEN-BC-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        self.assertRaises(frappe.ValidationError, fm2.insert)
+
+        # 4. Once fm1 receives the file, it can be re-dispatched
+        create_incoming(fm1.name)
+        scan_incoming_file(fm1.name, "TEST-TAKEN-BC-01")
+        fm1.reload()
+        self.assertEqual(fm1.status, "Received")
+
+        # Now get_scan_information should report not taken away
+        info_returned = get_scan_information(self.case_1)
+        self.assertFalse(info_returned.get("taken_away"))
+
+        # And inserting fm2 now succeeds
+        fm2.insert(ignore_permissions=True)
+        self.assertTrue(fm2.name.startswith("FM-"))
+
 
 def run_test_suite():
     import unittest

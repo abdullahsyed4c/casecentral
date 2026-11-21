@@ -79,6 +79,21 @@ class FileMovement(Document):
             if not row_matter and not row_case and not row_barcode:
                 frappe.throw(f"Row {idx} in Outgoing Files must have a Matter ID, Case, or Barcode.")
 
+            # Validate that the file is not currently taken away in another active movement
+            if self.docstatus == 0 or self.is_new():
+                taken_away_info = get_taken_away_info(
+                    case=row_case,
+                    barcode=row_barcode,
+                    matter=row_matter if (not row_case and not row_barcode) else None,
+                    current_docname=self.name
+                )
+                if taken_away_info:
+                    m_name = taken_away_info.get("movement")
+                    target = row_case or row_barcode or row_matter
+                    frappe.throw(
+                        f"Row {idx}: '{target}' has already been taken away in File Movement '{m_name}' and has not been returned."
+                    )
+
     def validate_duplicate_barcodes(self):
         # Validate uniqueness inside outgoing_files
         seen_barcodes = set()
@@ -253,6 +268,104 @@ def recalculate_matter_status_from_movements(matter_name):
 # SCAN & QUERY APIS
 # =========================================================
 
+def get_taken_away_info(case=None, barcode=None, matter=None, current_docname=None):
+    """
+    Checks if a case, barcode, or matter is currently taken away in an active File Movement
+    (docstatus = 1 and status not in ('Received', 'Cancelled')).
+    Returns dict with movement info if unreturned, else None.
+    Uses Frappe Query Builder (frappe.qb).
+    """
+    case = str(case or "").strip()
+    barcode = str(barcode or "").strip()
+    matter = str(matter or "").strip()
+
+    if not case and not barcode and not matter:
+        return None
+
+    bfi = frappe.qb.DocType("File Movement Item")
+    fm = frappe.qb.DocType("File Movement")
+
+    conditions = (
+        (fm.docstatus == 1)
+        & (~fm.status.isin(["Received", "Cancelled"]))
+        & (bfi.parentfield == "outgoing_files")
+    )
+    if current_docname:
+        conditions &= (fm.name != current_docname)
+
+    query = (
+        frappe.qb.from_(bfi)
+        .inner_join(fm).on(fm.name == bfi.parent)
+        .select(bfi.name, bfi["case"], bfi.barcode, bfi.matter, fm.name.as_("movement_name"), fm.status)
+        .where(conditions)
+    )
+
+    if case and barcode:
+        query = query.where((bfi["case"] == case) | (bfi.barcode == barcode))
+    elif case:
+        query = query.where(bfi["case"] == case)
+    elif barcode:
+        query = query.where(bfi.barcode == barcode)
+    elif matter:
+        query = query.where(bfi.matter == matter)
+
+    unreturned_candidates = query.run(as_dict=True)
+    if not unreturned_candidates:
+        return None
+
+    movement_names = list({row.movement_name for row in unreturned_candidates})
+    inc_bfi = frappe.qb.DocType("File Movement Item")
+    incoming_items = (
+        frappe.qb.from_(inc_bfi)
+        .select(inc_bfi.parent, inc_bfi["case"], inc_bfi.barcode, inc_bfi.matter)
+        .where(
+            (inc_bfi.parent.isin(movement_names))
+            & (inc_bfi.parentfield == "incoming_files")
+        )
+    ).run(as_dict=True)
+
+    for out_row in unreturned_candidates:
+        m_name = out_row.movement_name
+        o_case = (out_row.get("case") or "").strip()
+        o_barcode = (out_row.get("barcode") or "").strip()
+        o_matter = (out_row.get("matter") or "").strip()
+
+        is_returned = False
+        for inc_row in incoming_items:
+            if inc_row.get("parent") != m_name:
+                continue
+            i_case = (inc_row.get("case") or "").strip()
+            i_barcode = (inc_row.get("barcode") or "").strip()
+            i_matter = (inc_row.get("matter") or "").strip()
+
+            if o_case and i_case and o_case == i_case:
+                is_returned = True
+                break
+            if o_barcode and i_barcode and o_barcode == i_barcode:
+                is_returned = True
+                break
+            if not o_case and not o_barcode and i_matter and i_matter == o_matter:
+                is_returned = True
+                break
+
+        if not is_returned:
+            return {
+                "taken_away": True,
+                "movement": m_name,
+                "case": o_case,
+                "barcode": o_barcode,
+                "matter": o_matter,
+                "message": f"File '{o_case or o_barcode or o_matter}' has already been taken away in File Movement '{m_name}' and has not been returned."
+            }
+
+    return None
+
+
+@frappe.whitelist()
+def check_item_taken_away(case=None, barcode=None, matter=None, current_docname=None):
+    return get_taken_away_info(case=case, barcode=barcode, matter=matter, current_docname=current_docname)
+
+
 @frappe.whitelist()
 def get_scan_information(value):
     value = str(value or "").strip()
@@ -261,31 +374,46 @@ def get_scan_information(value):
 
     # 1. Check if exact Matter ID
     if frappe.db.exists("Matter", value):
+        cases = get_cases_for_matter(value)
+        matter_taken = get_taken_away_info(matter=value)
+        all_cases_taken = bool(cases and all(c.get("taken_away") for c in cases))
+        taken_away = bool(matter_taken or all_cases_taken)
+        first_m = matter_taken.get("movement") if matter_taken else (cases[0].get("taken_away_movement") if (all_cases_taken and cases) else "")
         return {
             "type": "matter",
             "matter": value,
-            "cases": get_cases_for_matter(value)
+            "cases": cases,
+            "taken_away": taken_away,
+            "taken_away_movement": first_m,
+            "taken_away_info": matter_taken or (cases[0].get("taken_away_info") if (all_cases_taken and cases) else None)
         }
 
     # 2. Check if exact Case Name
     if frappe.db.exists("Case", value):
         case_doc = frappe.get_doc("Case", value)
+        barcode = get_case_barcode(case_doc)
+        taken_info = get_taken_away_info(case=case_doc.name, barcode=barcode, matter=case_doc.get("matter"))
         return {
             "type": "case",
             "case_name": case_doc.name,
             "matter": case_doc.get("matter") or "",
-            "barcode": get_case_barcode(case_doc)
+            "barcode": barcode,
+            "taken_away": bool(taken_info),
+            "taken_away_info": taken_info
         }
 
     # 3. Check if Case Barcode
     case_name = find_case_by_barcode(value)
     if case_name:
         case_doc = frappe.get_doc("Case", case_name)
+        taken_info = get_taken_away_info(case=case_doc.name, barcode=value, matter=case_doc.get("matter"))
         return {
             "type": "case",
             "case_name": case_doc.name,
             "matter": case_doc.get("matter") or "",
-            "barcode": value
+            "barcode": value,
+            "taken_away": bool(taken_info),
+            "taken_away_info": taken_info
         }
 
     # If it does not match anything in the system
@@ -315,12 +443,17 @@ def get_cases_for_matter(matter):
     result = []
     for c in cases:
         case_doc = frappe.get_doc("Case", c.name)
+        barcode = get_case_barcode(case_doc)
+        taken_info = get_taken_away_info(case=c.name, barcode=barcode, matter=c.matter or matter)
         result.append({
             "name": c.name,
             "matter": c.matter or matter,
             "case_title": c.get("case_title") or "",
             "status": c.get("status") or "",
-            "barcode": get_case_barcode(case_doc)
+            "barcode": barcode,
+            "taken_away": bool(taken_info),
+            "taken_away_movement": taken_info.get("movement") if taken_info else "",
+            "taken_away_info": taken_info
         })
 
     return result

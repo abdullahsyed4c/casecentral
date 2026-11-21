@@ -178,17 +178,36 @@ frappe.ui.form.on("File Movement Item", {
             callback: function (response) {
                 var cases = response.message || [];
                 if (!cases.length) {
-                    frappe.db.get_value("Matter", row.matter, "name").then(res => {
-                        if (!res || !res.message || !res.message.name) {
-                            frappe.msgprint({
-                                title: __("Matter Not Found"),
-                                indicator: "red",
-                                message: __("Matter ID '<b>{0}</b>' does not exist.", [row.matter])
-                            });
-                            frappe.model.set_value(cdt, cdn, "matter", "");
-                            frappe.model.set_value(cdt, cdn, "case", "");
-                            frappe.model.set_value(cdt, cdn, "barcode", "");
-                        } else {
+                    frappe.call({
+                        method: "casecentral.case_central.doctype.file_movement.file_movement.get_scan_information",
+                        args: { value: row.matter },
+                        callback: function (res) {
+                            if (!res.message || res.message.type === "not_found") {
+                                frappe.msgprint({
+                                    title: __("Matter Not Found"),
+                                    indicator: "red",
+                                    message: __("Matter ID '<b>{0}</b>' does not exist.", [row.matter])
+                                });
+                                frappe.model.set_value(cdt, cdn, "matter", "");
+                                frappe.model.set_value(cdt, cdn, "case", "");
+                                frappe.model.set_value(cdt, cdn, "barcode", "");
+                                return;
+                            }
+                            if (row.parentfield === "outgoing_files" && res.message.taken_away) {
+                                var m_name = res.message.taken_away_movement || (res.message.taken_away_info && res.message.taken_away_info.movement) || "";
+                                frappe.msgprint({
+                                    title: __("Matter Already Taken Away"),
+                                    indicator: "orange",
+                                    message: __(
+                                        "Matter '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
+                                        [frappe.utils.escape_html(row.matter), frappe.utils.escape_html(m_name)]
+                                    )
+                                });
+                                frappe.model.set_value(cdt, cdn, "matter", "");
+                                frappe.model.set_value(cdt, cdn, "case", "");
+                                frappe.model.set_value(cdt, cdn, "barcode", "");
+                                return;
+                            }
                             frappe.show_alert({
                                 message: __("Matter {0} added (No linked Cases found).", [row.matter]),
                                 indicator: "blue"
@@ -199,6 +218,21 @@ frappe.ui.form.on("File Movement Item", {
                 }
 
                 if (cases.length === 1) {
+                    if (cases[0].taken_away) {
+                        var m_name = cases[0].taken_away_info ? cases[0].taken_away_info.movement : (cases[0].taken_away_movement || "");
+                        frappe.msgprint({
+                            title: __("Case Already Taken Away"),
+                            indicator: "orange",
+                            message: __(
+                                "Case '<b>{0}</b>' for Matter '<b>{1}</b>' has already been taken away in File Movement <b>{2}</b> and has not been returned.",
+                                [frappe.utils.escape_html(cases[0].name), frappe.utils.escape_html(row.matter), frappe.utils.escape_html(m_name)]
+                            )
+                        });
+                        frappe.model.set_value(cdt, cdn, "matter", "");
+                        frappe.model.set_value(cdt, cdn, "case", "");
+                        frappe.model.set_value(cdt, cdn, "barcode", "");
+                        return;
+                    }
                     // Populate single case directly
                     frappe.model.set_value(cdt, cdn, "case", cases[0].name);
                     frappe.model.set_value(cdt, cdn, "barcode", cases[0].barcode || "");
@@ -233,6 +267,22 @@ frappe.ui.form.on("File Movement Item", {
             args: { value: row.case },
             callback: function (r) {
                 if (r.message && r.message.type === "case") {
+                    if (row.parentfield === "outgoing_files" && r.message.taken_away) {
+                        var m_name = r.message.taken_away_info ? r.message.taken_away_info.movement : "";
+                        frappe.msgprint({
+                            title: __("Case Already Taken Away"),
+                            indicator: "orange",
+                            message: __(
+                                "Case '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
+                                [frappe.utils.escape_html(row.case), frappe.utils.escape_html(m_name)]
+                            )
+                        });
+                        frappe.model.set_value(cdt, cdn, "case", "");
+                        frappe.model.set_value(cdt, cdn, "matter", "");
+                        frappe.model.set_value(cdt, cdn, "barcode", "");
+                        return;
+                    }
+
                     if (r.message.matter) {
                         frappe.model.set_value(cdt, cdn, "matter", r.message.matter);
                     }
@@ -263,6 +313,22 @@ frappe.ui.form.on("File Movement Item", {
             args: { value: row.barcode },
             callback: function (r) {
                 if (r.message) {
+                    if (row.parentfield === "outgoing_files" && r.message.taken_away) {
+                        var m_name = r.message.taken_away_info ? r.message.taken_away_info.movement : "";
+                        frappe.msgprint({
+                            title: __("Barcode Already Taken Away"),
+                            indicator: "orange",
+                            message: __(
+                                "Barcode '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
+                                [frappe.utils.escape_html(row.barcode), frappe.utils.escape_html(m_name)]
+                            )
+                        });
+                        frappe.model.set_value(cdt, cdn, "barcode", "");
+                        frappe.model.set_value(cdt, cdn, "case", "");
+                        frappe.model.set_value(cdt, cdn, "matter", "");
+                        return;
+                    }
+
                     if (r.message.type === "case") {
                         frappe.model.set_value(cdt, cdn, "case", r.message.case_name || "");
                         if (r.message.matter) {
@@ -414,6 +480,20 @@ function process_outgoing_scan(frm, code) {
                 return;
             }
 
+            if (data.taken_away) {
+                var m_name = data.taken_away_info ? data.taken_away_info.movement : (data.taken_away_movement || "");
+                var item_desc = data.case_name || data.matter || code;
+                frappe.msgprint({
+                    title: __("File Already Taken Away"),
+                    indicator: "orange",
+                    message: __(
+                        "'{0}' has already been taken away in File Movement <b>{1}</b> and has not been returned. It cannot be added to Outgoing Files.",
+                        [frappe.utils.escape_html(item_desc), frappe.utils.escape_html(m_name)]
+                    )
+                });
+                return;
+            }
+
             if (data.type === "matter") {
                 var cases = data.cases || [];
 
@@ -440,6 +520,18 @@ function process_outgoing_scan(frm, code) {
                     }
                 } else if (cases.length === 1) {
                     var c = cases[0];
+                    if (c.taken_away) {
+                        var m_name = c.taken_away_info ? c.taken_away_info.movement : (c.taken_away_movement || "");
+                        frappe.msgprint({
+                            title: __("Case Already Taken Away"),
+                            indicator: "orange",
+                            message: __(
+                                "Case '<b>{0}</b>' for Matter '<b>{1}</b>' has already been taken away in File Movement <b>{2}</b> and has not been returned.",
+                                [frappe.utils.escape_html(c.name), frappe.utils.escape_html(data.matter), frappe.utils.escape_html(m_name)]
+                            )
+                        });
+                        return;
+                    }
                     var exists = (frm.doc.outgoing_files || []).some(function (item) {
                         return item.case === c.name;
                     });
@@ -511,14 +603,18 @@ function show_case_selection_dialog(frm, matter, cases, target_row, on_cancel) {
     }
 
     var available_count = cases.filter(function (c) {
-        return !existing_cases.has(c.name);
+        return !existing_cases.has(c.name) && !c.taken_away;
     }).length;
 
     if (available_count === 0) {
+        var all_taken = cases.length > 0 && cases.every(function (c) { return Boolean(c.taken_away); });
+        var msg = all_taken
+            ? __("All {0} case(s) for Matter <b>{1}</b> have already been taken away in active File Movements and have not been returned.", [cases.length, frappe.utils.escape_html(matter)])
+            : __("All {0} case(s) for Matter <b>{1}</b> are already in Outgoing Files or taken away.", [cases.length, frappe.utils.escape_html(matter)]);
         frappe.msgprint({
-            title: __("Cases Already Added"),
+            title: all_taken ? __("Cases Already Taken Away") : __("Cases Unavailable"),
             indicator: "orange",
-            message: __("All {0} case(s) for Matter <b>{1}</b> are already in Outgoing Files.", [cases.length, frappe.utils.escape_html(matter)])
+            message: msg
         });
         if (on_cancel) on_cancel();
         return;
@@ -527,13 +623,21 @@ function show_case_selection_dialog(frm, matter, cases, target_row, on_cancel) {
     var rows_html = "";
     cases.forEach(function (c) {
         var is_added = existing_cases.has(c.name);
+        var is_taken = Boolean(c.taken_away);
+        var is_disabled = is_added || is_taken;
         var barcode_label = c.barcode ? `<span class="badge badge-light" style="font-family: monospace; font-size: 11px; margin-left: 6px; padding: 2px 6px; border: 1px solid var(--border-color);">${frappe.utils.escape_html(c.barcode)}</span>` : "";
         var status_badge = c.status ? `<span class="badge badge-secondary" style="font-size: 11px;">${frappe.utils.escape_html(c.status)}</span>` : "";
-        var disabled_attr = is_added ? "disabled" : "";
-        var row_style = is_added
-            ? "display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 6px; opacity: 0.6; background: var(--subtle-accent-bg, var(--control-bg));"
+        var disabled_attr = is_disabled ? "disabled" : "";
+        var row_style = is_disabled
+            ? "display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 6px; opacity: 0.6; cursor: not-allowed; background: var(--subtle-accent-bg, var(--control-bg));"
             : "display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; background: var(--card-bg, var(--fg-color)); transition: background 0.15s ease;";
-        var already_added_note = is_added ? `<span class="badge badge-warning" style="margin-left: 6px; font-size: 10px;">${__("Already in Outgoing Files")}</span>` : "";
+        var note_badge = "";
+        if (is_taken) {
+            var m_name = c.taken_away_movement || (c.taken_away_info && c.taken_away_info.movement) || "";
+            note_badge = `<span class="badge" style="margin-left: 6px; font-size: 10px; background-color: var(--bg-red-100, rgba(239, 68, 68, 0.18)); color: var(--text-red-700, #b91c1c);">${__("Taken Away in {0}", [frappe.utils.escape_html(m_name)])}</span>`;
+        } else if (is_added) {
+            note_badge = `<span class="badge badge-warning" style="margin-left: 6px; font-size: 10px;">${__("Already in Outgoing Files")}</span>`;
+        }
         var title_html = c.case_title ? `<div class="text-muted" style="font-size: 12px; margin-top: 3px;">${frappe.utils.escape_html(c.case_title)}</div>` : "";
         var search_meta = ((c.name || "") + " " + (c.barcode || "") + " " + (c.case_title || "") + " " + (c.status || "")).toLowerCase();
 
@@ -545,7 +649,7 @@ function show_case_selection_dialog(frm, matter, cases, target_row, on_cancel) {
                         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
                             <strong style="font-size: 13px; color: var(--text-color);">${frappe.utils.escape_html(c.name)}</strong>
                             ${barcode_label}
-                            ${already_added_note}
+                            ${note_badge}
                         </div>
                         ${title_html}
                     </div>
@@ -592,9 +696,9 @@ function show_case_selection_dialog(frm, matter, cases, target_row, on_cancel) {
         primary_action_label: __("Add Selected Cases"),
         primary_action: function () {
             var selected = [];
-            dialog.$wrapper.find(".case-select-checkbox:checked").each(function () {
+            dialog.$wrapper.find(".case-select-checkbox:checked:not(:disabled)").each(function () {
                 var c_name = $(this).data("case-name");
-                var match = cases.find(function (c) { return c.name === c_name; });
+                var match = cases.find(function (c) { return c.name === c_name && !c.taken_away; });
                 if (match) {
                     selected.push(match);
                 }
