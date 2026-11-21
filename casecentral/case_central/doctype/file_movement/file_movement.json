@@ -76,7 +76,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nTaken Away\nMissing Files\nReceived\nCancelled",
+   "options": "Draft\nTaken Away\nTaken Away / Incoming Created\nMissing Files\nReceived\nCancelled",
    "read_only": 1
   },
   {

@@ -1078,7 +1078,7 @@ function update_client_missing_files_and_status(frm) {
 
     frm.clear_table("missing_file_items");
     if (valid_incoming.length === 0) {
-        frm.set_value("status", "Taken Away");
+        frm.set_value("status", frm.doc.has_incoming ? "Taken Away / Incoming Created" : "Taken Away");
     } else if (missing.length === 0) {
         frm.set_value("status", "Received");
     } else {
