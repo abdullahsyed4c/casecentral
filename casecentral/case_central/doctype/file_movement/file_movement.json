@@ -197,7 +197,8 @@
    "report": 1,
    "role": "Employee",
    "submit": 1,
-   "write": 1
+   "write": 1,
+   "delete": 1
   },
   {
    "amend": 1,
@@ -211,7 +212,8 @@
    "role": "Legal Assistant",
    "share": 1,
    "submit": 1,
-   "write": 1
+   "write": 1,
+   "delete": 1
   },
   {
    "amend": 1,
@@ -240,7 +242,8 @@
    "role": "Advocate",
    "share": 1,
    "submit": 1,
-   "write": 1
+   "write": 1,
+   "delete": 1
   }
  ],
  "row_format": "Dynamic",

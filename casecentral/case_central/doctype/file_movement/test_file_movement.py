@@ -409,8 +409,10 @@ class TestFileMovement(FrappeTestCase):
         self.assertEqual(doc.status, "Cancelled")
         self.assertEqual(frappe.db.get_value("Matter", self.matter_2, "status"), "Open")
 
-        # Attempt to delete cancelled doc must fail (traces preserved)
-        self.assertRaises(frappe.ValidationError, doc.delete)
+        # Cancelled doc can be deleted if user desires
+        fm_name = doc.name
+        doc.delete()
+        self.assertFalse(frappe.db.exists("File Movement", fm_name))
 
     def test_whitelisted_endpoint_permissions(self):
         """Mutating endpoints must enforce doc.check_permission('write') and read endpoints enforce 'read'."""

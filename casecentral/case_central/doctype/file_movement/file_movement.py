@@ -19,6 +19,13 @@ class FileMovement(Document):
         self.validate_duplicate_barcodes()
         self.update_missing_files_and_status()
 
+    def before_update_after_submit(self):
+        self.validate_duplicate_barcodes()
+        self.update_missing_files_and_status()
+
+    def on_update_after_submit(self):
+        self.update_outgoing_linked_statuses()
+
     def validate_movement(self):
         if not self.giver:
             frappe.throw("Giver is required.")
@@ -34,6 +41,13 @@ class FileMovement(Document):
 
         if not frappe.db.exists("Employee", self.receiver):
             frappe.throw(f"Receiver employee '{self.receiver}' does not exist.")
+
+        # Filter out completely blank rows in outgoing_files if any
+        if self.get("outgoing_files"):
+            self.set("outgoing_files", [
+                r for r in self.outgoing_files
+                if ((r.get("matter") or "").strip() or (r.get("case") or "").strip() or (r.get("barcode") or "").strip())
+            ])
 
         if not self.get("outgoing_files"):
             frappe.throw("Please add at least one row in the Outgoing Files table.")
@@ -99,7 +113,7 @@ class FileMovement(Document):
                 seen_inc_cases.add(case_name)
 
     def update_missing_files_and_status(self):
-        if self.status in ["Cancelled", "Incoming Cancelled"]:
+        if self.status in ["Cancelled"]:
             return
 
         if not self.has_incoming and not self.get("incoming_files"):
@@ -135,8 +149,9 @@ class FileMovement(Document):
         self.restore_outgoing_linked_statuses()
 
     def on_trash(self):
-        if self.docstatus != 0:
-            frappe.throw("Cannot delete submitted or cancelled File Movement. Audit traces must be preserved.")
+        if self.docstatus == 1:
+            frappe.throw("Cannot delete submitted File Movement. Please cancel it first.")
+        self.restore_outgoing_linked_statuses()
 
     def update_outgoing_linked_statuses(self):
         matters = set()
