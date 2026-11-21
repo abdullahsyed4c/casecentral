@@ -131,13 +131,8 @@ class FileMovement(Document):
         if self.status in ["Cancelled"]:
             return
 
-        if not self.has_incoming and not self.get("incoming_files"):
-            self.status = "Taken Away" if self.docstatus == 1 else "Draft"
-            self.set("missing_file_items", [])
-            return
-
         if not self.get("incoming_files"):
-            self.status = "Incoming Created"
+            self.status = "Taken Away" if self.docstatus == 1 else "Draft"
             self.set("missing_file_items", [])
             return
 
@@ -601,7 +596,7 @@ def create_incoming(movement_name):
         doc.status = "Received" if len(missing) == 0 else "Missing Files"
         doc.set_missing_file_table(missing)
     else:
-        doc.status = "Incoming Created"
+        doc.status = "Taken Away"
         doc.set("missing_file_items", [])
 
     doc.flags.ignore_validate_update_after_submit = True
@@ -637,7 +632,7 @@ def cancel_incoming(movement_name):
     if doc.docstatus != 1:
         frappe.throw("File Movement must be submitted before cancelling incoming.")
 
-    if not doc.has_incoming and doc.status not in ["Incoming Created", "Missing Files", "Received", "Incoming Cancelled"]:
+    if not doc.has_incoming and doc.status not in ["Missing Files", "Received", "Taken Away"]:
         frappe.throw("Incoming workflow has not been created for this movement.")
 
     doc.has_incoming = 0
@@ -683,7 +678,7 @@ def scan_incoming_file(movement_name, value):
     if doc.docstatus != 1:
         frappe.throw("Movement must be submitted before receiving files.")
 
-    if doc.status in ["Incoming Cancelled", "Cancelled"]:
+    if doc.status in ["Cancelled"]:
         frappe.throw(f"Cannot scan files into a movement with status '{doc.status}'.")
 
     outgoing = doc.get("outgoing_files") or []

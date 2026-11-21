@@ -27,7 +27,7 @@ frappe.ui.form.on("File Movement", {
             add_create_incoming_button(frm);
         }
 
-        // 2. When Incoming is active (Incoming Created, Missing Files, or Received)
+        // 2. When Incoming is active (Missing Files, Received, or Taken Away with active incoming)
         if (frm.doc.docstatus === 1 && frm.doc.has_incoming && frm.doc.status !== "Cancelled") {
             add_cancel_incoming_button(frm);
             if (frm.doc.status === "Missing Files") {
@@ -1077,18 +1077,17 @@ function update_client_missing_files_and_status(frm) {
     });
 
     frm.clear_table("missing_file_items");
-    missing.forEach(function (item) {
-        var r = frm.add_child("missing_file_items");
-        r.matter = item.matter;
-        r.case = item.case;
-        r.barcode = item.barcode;
-    });
-
     if (valid_incoming.length === 0) {
-        frm.set_value("status", "Incoming Created");
+        frm.set_value("status", "Taken Away");
     } else if (missing.length === 0) {
         frm.set_value("status", "Received");
     } else {
+        missing.forEach(function (item) {
+            var r = frm.add_child("missing_file_items");
+            r.matter = item.matter;
+            r.case = item.case;
+            r.barcode = item.barcode;
+        });
         frm.set_value("status", "Missing Files");
     }
 

@@ -287,7 +287,7 @@ class TestFileMovement(FrappeTestCase):
         """
         Complete Single Document Lifecycle test:
         1. Create Outgoing with 2 items in outgoing_files -> Submit (status: Taken Away, Matter: Working)
-        2. Call create_incoming on SAME doc -> has_incoming=1, incoming_files empty, status: Incoming Created
+        2. Call create_incoming on SAME doc -> has_incoming=1, incoming_files empty, status: Taken Away
         3. Scan 1 item into incoming_files via scan_incoming_file -> Status 'Missing Files', 1 missing
         4. Late return of remaining missing file via return_missing_files -> Status becomes 'Received', Matter: Open
         """
@@ -316,12 +316,12 @@ class TestFileMovement(FrappeTestCase):
         res_inc = create_incoming(doc.name)
         self.assertEqual(res_inc["name"], doc.name)
         self.assertEqual(res_inc["has_incoming"], 1)
-        self.assertEqual(res_inc["status"], "Incoming Created")
+        self.assertEqual(res_inc["status"], "Taken Away")
         self.assertEqual(res_inc["missing_count"], 0)
 
         doc.reload()
         self.assertEqual(len(doc.incoming_files), 0, "Incoming files should start empty")
-        self.assertEqual(doc.status, "Incoming Created")
+        self.assertEqual(doc.status, "Taken Away")
 
         # Step 3: Scan 1 item into incoming_files
         scan_res = scan_incoming_file(doc.name, "TEST-BC-101")
@@ -367,7 +367,7 @@ class TestFileMovement(FrappeTestCase):
         # Create incoming
         create_incoming(doc.name)
         doc.reload()
-        self.assertEqual(doc.status, "Incoming Created")
+        self.assertEqual(doc.status, "Taken Away")
         self.assertEqual(doc.has_incoming, 1)
 
         # Cancel incoming (not the whole FM)
@@ -384,10 +384,68 @@ class TestFileMovement(FrappeTestCase):
 
         # Reopen/Re-create incoming
         res_reopen = create_incoming(doc.name)
-        self.assertEqual(res_reopen["status"], "Incoming Created")
+        self.assertEqual(res_reopen["status"], "Taken Away")
         self.assertEqual(res_reopen["has_incoming"], 1)
         doc.reload()
-        self.assertEqual(doc.status, "Incoming Created")
+        self.assertEqual(doc.status, "Taken Away")
+
+    def test_delete_incoming_file_resets_status_to_taken_away(self):
+        """
+        When user returns 1 file from multiple files, status is 'Missing Files'.
+        When user deletes the returned file from incoming_files, status reverts to 'Taken Away' (never 'Incoming Created').
+        Cancelling incoming resets has_incoming=0 and allows creating incoming again.
+        """
+        doc = frappe.new_doc("File Movement")
+        doc.giver = self.giver
+        doc.receiver = self.receiver
+        doc.append("outgoing_files", {
+            "barcode": "TEST-BC-DEL-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        doc.append("outgoing_files", {
+            "barcode": "TEST-BC-DEL-02",
+            "matter": self.matter_2,
+            "case": self.case_2
+        })
+        doc.insert(ignore_permissions=True)
+        doc.submit()
+
+        self.assertEqual(doc.status, "Taken Away")
+
+        # 1. Create incoming
+        create_incoming(doc.name)
+        doc.reload()
+        self.assertEqual(doc.has_incoming, 1)
+        self.assertEqual(doc.status, "Taken Away")
+
+        # 2. Return 1 file -> status becomes 'Missing Files'
+        scan_incoming_file(doc.name, "TEST-BC-DEL-01")
+        doc.reload()
+        self.assertEqual(doc.status, "Missing Files")
+        self.assertEqual(len(doc.incoming_files), 1)
+        self.assertEqual(len(doc.missing_file_items), 1)
+
+        # 3. User deletes returned file from incoming_files and saves document (Update)
+        doc.incoming_files = []
+        doc.save(ignore_permissions=True)
+        doc.reload()
+        self.assertEqual(doc.status, "Taken Away", "Status must be Taken Away when incoming files is empty, never Incoming Created")
+        self.assertEqual(len(doc.missing_file_items), 0)
+        self.assertEqual(doc.has_incoming, 1)
+
+        # 4. Mandatory step: cancel incoming
+        res_can = cancel_incoming(doc.name)
+        self.assertEqual(res_can["status"], "Taken Away")
+        self.assertEqual(res_can["has_incoming"], 0)
+        doc.reload()
+        self.assertEqual(doc.status, "Taken Away")
+        self.assertEqual(doc.has_incoming, 0)
+
+        # 5. Re-create incoming
+        res_inc = create_incoming(doc.name)
+        self.assertEqual(res_inc["has_incoming"], 1)
+        self.assertEqual(res_inc["status"], "Taken Away")
 
     def test_on_cancel_whole_fm_and_delete_protection(self):
         """Cancelling the whole FM sets status to Cancelled, restores Matter, and blocks deletion."""
