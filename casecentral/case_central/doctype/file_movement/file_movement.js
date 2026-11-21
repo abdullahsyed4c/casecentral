@@ -1,6 +1,46 @@
 // Copyright (c) 2026, 4C Solutions and Contributors
 // See license.txt
 
+frappe.listview_settings = frappe.listview_settings || {};
+frappe.listview_settings["File Movement"] = {
+    has_indicator_for_draft: true,
+    add_fields: ["status", "has_incoming"],
+    get_indicator: function (doc) {
+        if (doc.status === "Taken Away") {
+            return [__("Taken Away"), "orange", "status,=,Taken Away"];
+        } else if (doc.status === "Taken Away / Incoming Created" || doc.status === "Incoming Created" || (doc.has_incoming && (!doc.incoming_files || doc.incoming_files.length === 0))) {
+            return [__("Taken Away / Incoming Created"), "blue", "status,=,Taken Away / Incoming Created"];
+        } else if (doc.status === "Missing Files") {
+            return [__("Missing Files"), "red", "status,=,Missing Files"];
+        } else if (doc.status === "Received") {
+            return [__("Received"), "green", "status,=,Received"];
+        } else if (doc.status === "Incoming Cancelled") {
+            return [__("Taken Away"), "orange", "status,=,Taken Away"];
+        } else if (doc.status === "Cancelled" || doc.docstatus === 2) {
+            return [__("Cancelled"), "red", "status,=,Cancelled"];
+        } else if (doc.status === "Draft" || doc.docstatus === 0) {
+            return [__("Draft"), "grey", "status,=,Draft"];
+        }
+    }
+};
+
+function update_form_indicator(frm) {
+    if (!frm.page) return;
+    if (frm.doc.status === "Draft" || frm.doc.docstatus === 0) {
+        frm.page.set_indicator(__("Draft"), "grey");
+    } else if (frm.doc.status === "Cancelled" || frm.doc.docstatus === 2) {
+        frm.page.set_indicator(__("Cancelled"), "red");
+    } else if (frm.doc.status === "Received") {
+        frm.page.set_indicator(__("Received"), "green");
+    } else if (frm.doc.status === "Missing Files") {
+        frm.page.set_indicator(__("Missing Files"), "red");
+    } else if (frm.doc.status === "Taken Away / Incoming Created" || frm.doc.status === "Incoming Created" || frm.doc.has_incoming) {
+        frm.page.set_indicator(__("Taken Away / Incoming Created"), "blue");
+    } else {
+        frm.page.set_indicator(__("Taken Away"), "orange");
+    }
+}
+
 frappe.ui.form.on("File Movement", {
 
     onload: function (frm) {
@@ -27,7 +67,7 @@ frappe.ui.form.on("File Movement", {
             add_create_incoming_button(frm);
         }
 
-        // 2. When Incoming is active (Incoming Created, Missing Files, or Received)
+        // 2. When Incoming is active (Taken Away / Incoming Created, Missing Files, or Received)
         if (frm.doc.docstatus === 1 && frm.doc.has_incoming && frm.doc.status !== "Cancelled") {
             add_cancel_incoming_button(frm);
             if (frm.doc.status === "Missing Files") {
@@ -35,9 +75,10 @@ frappe.ui.form.on("File Movement", {
             }
         }
 
-        if (frm.doc.status === "Incoming Created") {
-            frm.page.set_indicator(__("Taken Away / Incoming Created"), "blue");
-        }
+        update_form_indicator(frm);
+        setTimeout(function () {
+            update_form_indicator(frm);
+        }, 150);
     },
 
     giver: function (frm) {
@@ -1082,10 +1123,7 @@ function update_client_missing_files_and_status(frm) {
 
     frm.clear_table("missing_file_items");
     if (valid_incoming.length === 0) {
-        frm.set_value("status", frm.doc.has_incoming ? "Incoming Created" : "Taken Away");
-        if (frm.doc.has_incoming) {
-            frm.page.set_indicator(__("Taken Away / Incoming Created"), "blue");
-        }
+        frm.set_value("status", frm.doc.has_incoming ? "Taken Away / Incoming Created" : "Taken Away");
     } else if (missing.length === 0) {
         frm.set_value("status", "Received");
     } else {
@@ -1102,6 +1140,7 @@ function update_client_missing_files_and_status(frm) {
     frm.refresh_field("status");
     frm.refresh_field("incoming_files");
     frm.dirty();
+    update_form_indicator(frm);
 }
 
 function process_incoming_scan(frm, code) {

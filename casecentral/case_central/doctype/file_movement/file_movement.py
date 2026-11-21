@@ -6,6 +6,24 @@ import frappe
 from frappe.model.document import Document
 
 
+def ensure_status_options():
+    try:
+        current_options = frappe.db.get_value("DocField", {"parent": "File Movement", "fieldname": "status"}, "options") or ""
+        needed = ["Taken Away / Incoming Created", "Incoming Created"]
+        opts = [opt.strip() for opt in current_options.split("\n") if opt.strip()]
+        changed = False
+        for n in needed:
+            if n not in opts:
+                opts.append(n)
+                changed = True
+        if changed:
+            new_options = "\n".join(opts)
+            frappe.db.set_value("DocField", {"parent": "File Movement", "fieldname": "status"}, "options", new_options)
+            frappe.clear_cache(doctype="File Movement")
+    except Exception:
+        pass
+
+
 class FileMovement(Document):
 
     def autoname(self):
@@ -131,12 +149,14 @@ class FileMovement(Document):
         if self.status in ["Cancelled"]:
             return
 
-        if self.status in ["Taken Away / Incoming Created", "Taken Away/Incoming Created", "taken away/incoming created"]:
-            self.status = "Incoming Created"
+        ensure_status_options()
+
+        if self.status in ["Taken Away/Incoming Created", "taken away/incoming created"]:
+            self.status = "Taken Away / Incoming Created"
 
         if not self.get("incoming_files"):
             if self.docstatus == 1:
-                self.status = "Incoming Created" if self.has_incoming else "Taken Away"
+                self.status = "Taken Away / Incoming Created" if self.has_incoming else "Taken Away"
             else:
                 self.status = "Draft"
             self.set("missing_file_items", [])
@@ -597,12 +617,13 @@ def create_incoming(movement_name):
     if not doc.incoming_date:
         doc.incoming_date = frappe.utils.now_datetime()
 
+    ensure_status_options()
     missing = calculate_missing_files_from_doc(doc)
     if doc.get("incoming_files"):
         doc.status = "Received" if len(missing) == 0 else "Missing Files"
         doc.set_missing_file_table(missing)
     else:
-        doc.status = "Incoming Created"
+        doc.status = "Taken Away / Incoming Created"
         doc.set("missing_file_items", [])
 
     doc.flags.ignore_validate_update_after_submit = True
