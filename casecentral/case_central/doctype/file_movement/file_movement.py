@@ -300,14 +300,21 @@ def get_taken_away_info(case=None, barcode=None, matter=None, current_docname=No
         .where(conditions)
     )
 
-    if case and barcode:
-        query = query.where((bfi["case"] == case) | (bfi.barcode == barcode))
-    elif case:
-        query = query.where(bfi["case"] == case)
-    elif barcode:
-        query = query.where(bfi.barcode == barcode)
-    elif matter:
-        query = query.where(bfi.matter == matter)
+    match_conditions = []
+    if case:
+        match_conditions.append(bfi["case"] == case)
+    if barcode:
+        match_conditions.append(bfi.barcode == barcode)
+    if matter and not case and not barcode:
+        match_conditions.append(bfi.matter == matter)
+
+    if match_conditions:
+        combined = match_conditions[0]
+        for c in match_conditions[1:]:
+            combined = combined | c
+        query = query.where(combined)
+    else:
+        return None
 
     unreturned_candidates = query.run(as_dict=True)
     if not unreturned_candidates:
@@ -399,6 +406,7 @@ def get_scan_information(value):
             "matter": case_doc.get("matter") or "",
             "barcode": barcode,
             "taken_away": bool(taken_info),
+            "taken_away_movement": taken_info.get("movement") if taken_info else "",
             "taken_away_info": taken_info
         }
 
@@ -413,6 +421,20 @@ def get_scan_information(value):
             "matter": case_doc.get("matter") or "",
             "barcode": value,
             "taken_away": bool(taken_info),
+            "taken_away_movement": taken_info.get("movement") if taken_info else "",
+            "taken_away_info": taken_info
+        }
+
+    # 4. Check if raw barcode or value is taken away in any active File Movement
+    taken_info = get_taken_away_info(case=value, barcode=value)
+    if taken_info:
+        return {
+            "type": "barcode",
+            "barcode": taken_info.get("barcode") or value,
+            "case_name": taken_info.get("case") or "",
+            "matter": taken_info.get("matter") or "",
+            "taken_away": True,
+            "taken_away_movement": taken_info.get("movement") or "",
             "taken_away_info": taken_info
         }
 
@@ -597,10 +619,12 @@ def create_incoming(movement_name):
 @frappe.whitelist()
 def cancel_incoming(movement_name):
     """
-    Cancels the incoming workflow on this File Movement without deleting or cancelling the whole document:
+    Cancels the incoming workflow on this File Movement and resets status to 'Taken Away':
     - Asserts write permission
-    - Sets status to 'Incoming Cancelled'
-    - Preserves all outgoing, incoming, and missing file traces intact
+    - Sets has_incoming = 0
+    - Resets incoming_date = None
+    - Clears incoming_files and missing_file_items
+    - Sets status to 'Taken Away'
     - Updates DB and recalculates linked matter statuses using standard Document Model save
     """
     movement_name = str(movement_name or "").strip()
@@ -613,10 +637,14 @@ def cancel_incoming(movement_name):
     if doc.docstatus != 1:
         frappe.throw("File Movement must be submitted before cancelling incoming.")
 
-    if not doc.has_incoming and doc.status != "Incoming Created":
+    if not doc.has_incoming and doc.status not in ["Incoming Created", "Missing Files", "Received", "Incoming Cancelled"]:
         frappe.throw("Incoming workflow has not been created for this movement.")
 
-    doc.status = "Incoming Cancelled"
+    doc.has_incoming = 0
+    doc.incoming_date = None
+    doc.set("incoming_files", [])
+    doc.set("missing_file_items", [])
+    doc.status = "Taken Away"
     doc.flags.ignore_validate_update_after_submit = True
     doc.save(ignore_permissions=True)
 
@@ -624,9 +652,9 @@ def cancel_incoming(movement_name):
 
     return {
         "name": doc.name,
-        "has_incoming": doc.has_incoming,
-        "status": "Incoming Cancelled",
-        "message": "Incoming workflow has been cancelled. All audit traces have been preserved."
+        "has_incoming": 0,
+        "status": "Taken Away",
+        "message": "Incoming workflow has been cancelled. Status updated to 'Taken Away'."
     }
 
 

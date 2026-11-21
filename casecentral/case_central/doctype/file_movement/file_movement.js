@@ -27,8 +27,9 @@ frappe.ui.form.on("File Movement", {
             add_create_incoming_button(frm);
         }
 
-        // 2. When Incoming is active (Incoming Created or Missing Files)
-        if (frm.doc.docstatus === 1 && frm.doc.has_incoming && (frm.doc.status === "Incoming Created" || frm.doc.status === "Missing Files")) {
+        // 2. When Incoming is active (Incoming Created, Missing Files, or Received)
+        if (frm.doc.docstatus === 1 && frm.doc.has_incoming && frm.doc.status !== "Cancelled") {
+            add_cancel_incoming_button(frm);
             if (frm.doc.status === "Missing Files") {
                 add_return_missing_button(frm);
             }
@@ -199,13 +200,20 @@ frappe.ui.form.on("File Movement Item", {
                                     title: __("Matter Already Taken Away"),
                                     indicator: "orange",
                                     message: __(
-                                        "Matter '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
+                                        "Matter '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned. It cannot be added to Outgoing Files.",
                                         [frappe.utils.escape_html(row.matter), frappe.utils.escape_html(m_name)]
                                     )
                                 });
                                 frappe.model.set_value(cdt, cdn, "matter", "");
                                 frappe.model.set_value(cdt, cdn, "case", "");
                                 frappe.model.set_value(cdt, cdn, "barcode", "");
+                                if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                                    var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[cdn];
+                                    if (grid_row) {
+                                        grid_row.remove();
+                                    }
+                                }
+                                frm.refresh_field("outgoing_files");
                                 return;
                             }
                             frappe.show_alert({
@@ -224,13 +232,20 @@ frappe.ui.form.on("File Movement Item", {
                             title: __("Case Already Taken Away"),
                             indicator: "orange",
                             message: __(
-                                "Case '<b>{0}</b>' for Matter '<b>{1}</b>' has already been taken away in File Movement <b>{2}</b> and has not been returned.",
+                                "Case '<b>{0}</b>' for Matter '<b>{1}</b>' has already been taken away in File Movement <b>{2}</b> and has not been returned. It cannot be added to Outgoing Files.",
                                 [frappe.utils.escape_html(cases[0].name), frappe.utils.escape_html(row.matter), frappe.utils.escape_html(m_name)]
                             )
                         });
                         frappe.model.set_value(cdt, cdn, "matter", "");
                         frappe.model.set_value(cdt, cdn, "case", "");
                         frappe.model.set_value(cdt, cdn, "barcode", "");
+                        if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                            var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[cdn];
+                            if (grid_row) {
+                                grid_row.remove();
+                            }
+                        }
+                        frm.refresh_field("outgoing_files");
                         return;
                     }
                     // Populate single case directly
@@ -246,6 +261,13 @@ frappe.ui.form.on("File Movement Item", {
                         if (!row.case) {
                             frappe.model.set_value(cdt, cdn, "matter", "");
                             frappe.model.set_value(cdt, cdn, "barcode", "");
+                            if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                                var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[cdn];
+                                if (grid_row) {
+                                    grid_row.remove();
+                                }
+                            }
+                            frm.refresh_field("outgoing_files");
                         }
                     });
                 }
@@ -266,23 +288,32 @@ frappe.ui.form.on("File Movement Item", {
             method: "casecentral.case_central.doctype.file_movement.file_movement.get_scan_information",
             args: { value: row.case },
             callback: function (r) {
-                if (r.message && r.message.type === "case") {
-                    if (row.parentfield === "outgoing_files" && r.message.taken_away) {
-                        var m_name = r.message.taken_away_info ? r.message.taken_away_info.movement : "";
-                        frappe.msgprint({
-                            title: __("Case Already Taken Away"),
-                            indicator: "orange",
-                            message: __(
-                                "Case '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
-                                [frappe.utils.escape_html(row.case), frappe.utils.escape_html(m_name)]
-                            )
-                        });
-                        frappe.model.set_value(cdt, cdn, "case", "");
-                        frappe.model.set_value(cdt, cdn, "matter", "");
-                        frappe.model.set_value(cdt, cdn, "barcode", "");
-                        return;
-                    }
+                if (!r.message) return;
 
+                if (row.parentfield === "outgoing_files" && r.message.taken_away) {
+                    var m_name = (r.message.taken_away_info && r.message.taken_away_info.movement) || r.message.taken_away_movement || "";
+                    frappe.msgprint({
+                        title: __("Case Already Taken Away"),
+                        indicator: "orange",
+                        message: __(
+                            "Case '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned. It cannot be added to Outgoing Files.",
+                            [frappe.utils.escape_html(row.case), frappe.utils.escape_html(m_name)]
+                        )
+                    });
+                    frappe.model.set_value(cdt, cdn, "case", "");
+                    frappe.model.set_value(cdt, cdn, "matter", "");
+                    frappe.model.set_value(cdt, cdn, "barcode", "");
+                    if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                        var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[cdn];
+                        if (grid_row) {
+                            grid_row.remove();
+                        }
+                    }
+                    frm.refresh_field("outgoing_files");
+                    return;
+                }
+
+                if (r.message.type === "case" || r.message.type === "taken_away") {
                     if (r.message.matter) {
                         frappe.model.set_value(cdt, cdn, "matter", r.message.matter);
                     }
@@ -292,7 +323,7 @@ frappe.ui.form.on("File Movement Item", {
                     if (row.parentfield === "incoming_files") {
                         update_client_missing_files_and_status(frm);
                     }
-                } else if (r.message && r.message.type === "not_found") {
+                } else if (r.message.type === "not_found") {
                     frappe.msgprint({
                         title: __("Case Not Found"),
                         indicator: "red",
@@ -312,34 +343,41 @@ frappe.ui.form.on("File Movement Item", {
             method: "casecentral.case_central.doctype.file_movement.file_movement.get_scan_information",
             args: { value: row.barcode },
             callback: function (r) {
-                if (r.message) {
-                    if (row.parentfield === "outgoing_files" && r.message.taken_away) {
-                        var m_name = r.message.taken_away_info ? r.message.taken_away_info.movement : "";
-                        frappe.msgprint({
-                            title: __("Barcode Already Taken Away"),
-                            indicator: "orange",
-                            message: __(
-                                "Barcode '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned.",
-                                [frappe.utils.escape_html(row.barcode), frappe.utils.escape_html(m_name)]
-                            )
-                        });
-                        frappe.model.set_value(cdt, cdn, "barcode", "");
-                        frappe.model.set_value(cdt, cdn, "case", "");
-                        frappe.model.set_value(cdt, cdn, "matter", "");
-                        return;
-                    }
+                if (!r.message) return;
 
-                    if (r.message.type === "case") {
-                        frappe.model.set_value(cdt, cdn, "case", r.message.case_name || "");
-                        if (r.message.matter) {
-                            frappe.model.set_value(cdt, cdn, "matter", r.message.matter);
+                if (row.parentfield === "outgoing_files" && r.message.taken_away) {
+                    var m_name = (r.message.taken_away_info && r.message.taken_away_info.movement) || r.message.taken_away_movement || "";
+                    frappe.msgprint({
+                        title: __("Barcode Already Taken Away"),
+                        indicator: "orange",
+                        message: __(
+                            "Barcode '<b>{0}</b>' has already been taken away in File Movement <b>{1}</b> and has not been returned. It cannot be added to Outgoing Files.",
+                            [frappe.utils.escape_html(row.barcode), frappe.utils.escape_html(m_name)]
+                        )
+                    });
+                    frappe.model.set_value(cdt, cdn, "barcode", "");
+                    frappe.model.set_value(cdt, cdn, "case", "");
+                    frappe.model.set_value(cdt, cdn, "matter", "");
+                    if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                        var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[cdn];
+                        if (grid_row) {
+                            grid_row.remove();
                         }
-                    } else if (r.message.type === "matter") {
+                    }
+                    frm.refresh_field("outgoing_files");
+                    return;
+                }
+
+                if (r.message.type === "case") {
+                    frappe.model.set_value(cdt, cdn, "case", r.message.case_name || "");
+                    if (r.message.matter) {
                         frappe.model.set_value(cdt, cdn, "matter", r.message.matter);
                     }
-                    if (row.parentfield === "incoming_files") {
-                        update_client_missing_files_and_status(frm);
-                    }
+                } else if (r.message.type === "matter") {
+                    frappe.model.set_value(cdt, cdn, "matter", r.message.matter);
+                }
+                if (row.parentfield === "incoming_files") {
+                    update_client_missing_files_and_status(frm);
                 }
             }
         });
@@ -446,13 +484,19 @@ function setup_scan_barcode_input(frm) {
     if (field.$input) {
         field.$input.attr("placeholder", placeholder);
         field.$input.off("keydown.fm_scan").on("keydown.fm_scan", function (e) {
-            if (e.which === 13) {
+            if (e.which === 13 || e.which === 9) {
                 e.preventDefault();
                 e.stopPropagation();
                 var val = $(this).val().trim();
                 if (val) {
                     handle_barcode_scan(frm, val);
                 }
+            }
+        });
+        field.$input.off("change.fm_scan").on("change.fm_scan", function () {
+            var val = $(this).val().trim();
+            if (val) {
+                handle_barcode_scan(frm, val);
             }
         });
     }
@@ -481,8 +525,8 @@ function process_outgoing_scan(frm, code) {
             }
 
             if (data.taken_away) {
-                var m_name = data.taken_away_info ? data.taken_away_info.movement : (data.taken_away_movement || "");
-                var item_desc = data.case_name || data.matter || code;
+                var m_name = (data.taken_away_info && data.taken_away_info.movement) || data.taken_away_movement || "";
+                var item_desc = data.case_name || data.barcode || data.matter || code;
                 frappe.msgprint({
                     title: __("File Already Taken Away"),
                     indicator: "orange",
@@ -491,6 +535,7 @@ function process_outgoing_scan(frm, code) {
                         [frappe.utils.escape_html(item_desc), frappe.utils.escape_html(m_name)]
                     )
                 });
+                clear_initial_blank_outgoing_row(frm);
                 return;
             }
 
@@ -616,6 +661,18 @@ function show_case_selection_dialog(frm, matter, cases, target_row, on_cancel) {
             indicator: "orange",
             message: msg
         });
+        if (target_row) {
+            frappe.model.set_value(target_row.doctype, target_row.name, "matter", "");
+            frappe.model.set_value(target_row.doctype, target_row.name, "case", "");
+            frappe.model.set_value(target_row.doctype, target_row.name, "barcode", "");
+            if (frm.fields_dict.outgoing_files && frm.fields_dict.outgoing_files.grid) {
+                var grid_row = frm.fields_dict.outgoing_files.grid.grid_rows_by_docname[target_row.name];
+                if (grid_row) {
+                    grid_row.remove();
+                }
+            }
+            frm.refresh_field("outgoing_files");
+        }
         if (on_cancel) on_cancel();
         return;
     }
@@ -1186,6 +1243,42 @@ function add_create_incoming_button(frm) {
 
     if (btn) {
         btn.addClass("btn-primary");
+    }
+}
+
+
+// =========================================================
+// ACTION: CANCEL INCOMING
+// =========================================================
+
+function add_cancel_incoming_button(frm) {
+    var btn = frm.add_custom_button(__("Cancel Incoming"), function () {
+        frappe.confirm(
+            __("Are you sure you want to cancel the Incoming workflow? This will reset the status to 'Taken Away'."),
+            function () {
+                frappe.call({
+                    method: "casecentral.case_central.doctype.file_movement.file_movement.cancel_incoming",
+                    args: {
+                        movement_name: frm.doc.name
+                    },
+                    freeze: true,
+                    freeze_message: __("Cancelling Incoming workflow..."),
+                    callback: function (r) {
+                        if (r.message) {
+                            frappe.show_alert({
+                                message: __("Incoming workflow cancelled. Status updated to 'Taken Away'."),
+                                indicator: "orange"
+                            });
+                            frm.reload_doc();
+                        }
+                    }
+                });
+            }
+        );
+    });
+
+    if (btn) {
+        btn.addClass("btn-danger-light");
     }
 }
 

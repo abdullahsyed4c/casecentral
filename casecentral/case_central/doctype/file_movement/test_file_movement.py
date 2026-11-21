@@ -349,7 +349,7 @@ class TestFileMovement(FrappeTestCase):
         self.assertEqual(frappe.db.get_value("Matter", self.matter_2, "status"), "Open")
 
     def test_cancel_incoming_preserves_traces(self):
-        """Cancelling incoming preserves the whole FM and traces, sets status to Incoming Cancelled."""
+        """Cancelling incoming resets status to 'Taken Away', has_incoming to 0, and allows re-creating incoming."""
         doc = frappe.new_doc("File Movement")
         doc.giver = self.giver
         doc.receiver = self.receiver
@@ -368,20 +368,24 @@ class TestFileMovement(FrappeTestCase):
         create_incoming(doc.name)
         doc.reload()
         self.assertEqual(doc.status, "Incoming Created")
+        self.assertEqual(doc.has_incoming, 1)
 
         # Cancel incoming (not the whole FM)
         res_can = cancel_incoming(doc.name)
-        self.assertEqual(res_can["status"], "Incoming Cancelled")
+        self.assertEqual(res_can["status"], "Taken Away")
+        self.assertEqual(res_can["has_incoming"], 0)
 
         doc.reload()
         self.assertEqual(doc.docstatus, 1, "Docstatus must remain 1 (submitted), NOT cancelled/deleted")
-        self.assertEqual(doc.status, "Incoming Cancelled")
+        self.assertEqual(doc.status, "Taken Away")
+        self.assertEqual(doc.has_incoming, 0)
         self.assertEqual(len(doc.outgoing_files), 1, "Outgoing files traces must be preserved")
         self.assertEqual(frappe.db.get_value("Matter", self.matter_1, "status"), "Working")
 
-        # Reopen incoming
+        # Reopen/Re-create incoming
         res_reopen = create_incoming(doc.name)
         self.assertEqual(res_reopen["status"], "Incoming Created")
+        self.assertEqual(res_reopen["has_incoming"], 1)
         doc.reload()
         self.assertEqual(doc.status, "Incoming Created")
 
