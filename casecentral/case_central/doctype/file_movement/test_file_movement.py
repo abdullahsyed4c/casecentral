@@ -573,6 +573,65 @@ class TestFileMovement(FrappeTestCase):
         fm2.insert(ignore_permissions=True)
         self.assertTrue(fm2.name.startswith("FM-"))
 
+    def test_prevent_duplicate_incoming_files(self):
+        """Prevent duplicate files in incoming_files via manual save, scan_incoming_file, and return_missing_files."""
+        fm = frappe.new_doc("File Movement")
+        fm.giver = self.giver
+        fm.receiver = self.receiver
+        fm.append("outgoing_files", {
+            "barcode": "TEST-DUP-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        fm.append("outgoing_files", {
+            "barcode": "TEST-DUP-02",
+            "matter": self.matter_2,
+            "case": self.case_2
+        })
+        fm.insert(ignore_permissions=True)
+        fm.submit()
+
+        create_incoming(fm.name)
+        fm.reload()
+
+        # 1. Manually adding duplicate barcode/case in incoming_files must raise ValidationError on save
+        fm.append("incoming_files", {
+            "barcode": "TEST-DUP-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        fm.append("incoming_files", {
+            "barcode": "TEST-DUP-01",
+            "matter": self.matter_1,
+            "case": self.case_1
+        })
+        self.assertRaises(frappe.ValidationError, fm.save)
+
+        # Reset incoming_files to test API deduplication
+        fm.set("incoming_files", [])
+        fm.save()
+
+        # 2. scan_incoming_file: scan same file twice -> only 1 row added, second scan returns warning
+        res1 = scan_incoming_file(fm.name, "TEST-DUP-01")
+        self.assertEqual(res1.get("status"), "success")
+        fm.reload()
+        self.assertEqual(len(fm.incoming_files), 1)
+
+        res2 = scan_incoming_file(fm.name, "TEST-DUP-01")
+        self.assertEqual(res2.get("status"), "warning")
+        self.assertIn("already scanned", res2.get("message", ""))
+        fm.reload()
+        self.assertEqual(len(fm.incoming_files), 1)
+
+        # 3. return_missing_files with duplicate items or already returned file -> no duplicates created
+        return_missing_files(fm.name, files=[{"case": self.case_2}, {"case": self.case_2}])
+        fm.reload()
+        # Should have 2 incoming files: case_1 and case_2 (no duplicate case_2)
+        self.assertEqual(len(fm.incoming_files), 2)
+        cases_in_incoming = [r.case for r in fm.incoming_files]
+        self.assertEqual(sorted(cases_in_incoming), sorted([self.case_1, self.case_2]))
+        self.assertEqual(fm.status, "Received")
+
 
 def run_test_suite():
     import unittest

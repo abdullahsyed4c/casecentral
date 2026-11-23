@@ -141,32 +141,34 @@ class FileMovement(Document):
         seen_barcodes = set()
         seen_cases = set()
         for idx, row in enumerate(self.get("outgoing_files") or [], start=1):
-            barcode = (row.get("barcode") or "").strip()
+            barcode = (row.get("barcode") or "").strip().lower()
+            case_name = (row.get("case") or "").strip().lower()
+
             if barcode:
-                if barcode in seen_barcodes:
-                    frappe.throw(f"Duplicate barcode '{barcode}' in Outgoing Files row {idx}.")
+                if barcode in seen_barcodes or (case_name and barcode in seen_cases):
+                    frappe.throw(f"Duplicate barcode '{row.get('barcode')}' in Outgoing Files row {idx}.")
                 seen_barcodes.add(barcode)
 
-            case_name = (row.get("case") or "").strip()
             if case_name:
-                if case_name in seen_cases:
-                    frappe.throw(f"Duplicate Case '{case_name}' in Outgoing Files row {idx}.")
+                if case_name in seen_cases or (barcode and case_name in seen_barcodes):
+                    frappe.throw(f"Duplicate Case '{row.get('case')}' in Outgoing Files row {idx}.")
                 seen_cases.add(case_name)
 
         # Validate uniqueness inside incoming_files
         seen_inc_barcodes = set()
         seen_inc_cases = set()
         for idx, row in enumerate(self.get("incoming_files") or [], start=1):
-            barcode = (row.get("barcode") or "").strip()
+            barcode = (row.get("barcode") or "").strip().lower()
+            case_name = (row.get("case") or "").strip().lower()
+
             if barcode:
-                if barcode in seen_inc_barcodes:
-                    frappe.throw(f"Duplicate barcode '{barcode}' in Incoming Files row {idx}.")
+                if barcode in seen_inc_barcodes or (case_name and barcode in seen_inc_cases):
+                    frappe.throw(f"Duplicate barcode '{row.get('barcode')}' in Incoming Files row {idx}.")
                 seen_inc_barcodes.add(barcode)
 
-            case_name = (row.get("case") or "").strip()
             if case_name:
-                if case_name in seen_inc_cases:
-                    frappe.throw(f"Duplicate Case '{case_name}' in Incoming Files row {idx}.")
+                if case_name in seen_inc_cases or (barcode and case_name in seen_inc_barcodes):
+                    frappe.throw(f"Duplicate Case '{row.get('case')}' in Incoming Files row {idx}.")
                 seen_inc_cases.add(case_name)
 
     def update_missing_files_and_status(self):
@@ -565,14 +567,14 @@ def is_item_returned(out_row, incoming_rows):
     """
     Checks if an item from outgoing_files is present in incoming_rows.
     """
-    out_case = (out_row.get("case") or "").strip()
-    out_barcode = (out_row.get("barcode") or "").strip()
-    out_matter = (out_row.get("matter") or "").strip()
+    out_case = (out_row.get("case") or "").strip().lower()
+    out_barcode = (out_row.get("barcode") or "").strip().lower()
+    out_matter = (out_row.get("matter") or "").strip().lower()
 
     for inc_row in incoming_rows:
-        inc_case = (inc_row.get("case") or "").strip()
-        inc_barcode = (inc_row.get("barcode") or "").strip()
-        inc_matter = (inc_row.get("matter") or "").strip()
+        inc_case = (inc_row.get("case") or "").strip().lower()
+        inc_barcode = (inc_row.get("barcode") or "").strip().lower()
+        inc_matter = (inc_row.get("matter") or "").strip().lower()
 
         # 1. Match by case if both have case
         if out_case and inc_case and out_case == inc_case:
@@ -582,11 +584,15 @@ def is_item_returned(out_row, incoming_rows):
         if out_barcode and inc_barcode and out_barcode == inc_barcode:
             return True
 
-        # 3. Match by matter
+        # 3. Cross match: case == barcode
+        if out_case and inc_barcode and out_case == inc_barcode:
+            return True
+        if out_barcode and inc_case and out_barcode == inc_case:
+            return True
+
+        # 4. Match by matter if neither row has case or barcode
         if out_matter and inc_matter and out_matter == inc_matter:
-            if not out_case and not inc_case:
-                return True
-            if out_case and inc_case and out_case == inc_case:
+            if not out_case and not inc_case and not out_barcode and not inc_barcode:
                 return True
 
     return False
@@ -834,20 +840,17 @@ def scan_incoming_file(movement_name, value):
     already_scanned = 0
 
     for item in items_to_add:
-        if is_item_returned(item, incoming):
+        if is_item_returned(item, doc.get("incoming_files") or []):
             already_scanned += 1
         else:
             new_items.append(item)
+            doc.append("incoming_files", item)
 
     if not new_items:
         return {
             "status": "warning",
             "message": f"All matching items for '<b>{value}</b>' are already scanned in Incoming Files."
         }
-
-    # Append new items into incoming_files child table
-    for item in new_items:
-        doc.append("incoming_files", item)
 
     # Recalculate remaining missing
     remaining_missing = calculate_missing_files_from_doc(doc)
@@ -954,7 +957,7 @@ def return_missing_files(
                 break
 
         if matched_out:
-            if not is_item_returned(matched_out, incoming):
+            if not is_item_returned(matched_out, doc.get("incoming_files") or []):
                 doc.append("incoming_files", {
                     "barcode": matched_out.get("barcode") or "",
                     "matter": matched_out.get("matter") or "",
@@ -971,7 +974,7 @@ def return_missing_files(
                     t_matter = frappe.db.get_value("Case", t_case, "matter") or ""
 
             entry = {"barcode": t_barcode, "matter": t_matter, "case": t_case}
-            if not is_item_returned(entry, incoming):
+            if not is_item_returned(entry, doc.get("incoming_files") or []):
                 doc.append("incoming_files", entry)
                 added_count += 1
 
